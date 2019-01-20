@@ -196,7 +196,7 @@ function output_result(item_name, lotters)
     table.insert(lines, "~~ Players who can lot for " .. item_name .. " ~~")
 
     if table.getn(lotters) == 0 then
-        table.insert(lines, "  Freelot!")
+        table.insert(lines, "  None!")
     else
         local out_str = ""
         for _, name in pairs(lotters) do
