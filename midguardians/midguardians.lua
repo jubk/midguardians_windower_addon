@@ -1,37 +1,50 @@
 _addon.name = 'Midguardians'
 _addon.author = 'Miaw'
 _addon.version = '0.1'
-_addon.commands = {'mg'}
+_addon.command = 'mg'
+_addon.commands = {'reload'}
 
 res = require('resources')
 config = require('config')
 packets = require('packets')
 json =  require('json')
+config = require('config')
 require("logger")
 
+
+local default_settings = {}
+default_settings.url = 'http://www.midguardians.com/gear-overview/loot.json'
+default_settings.debug = false
+
+settings = config.load(default_settings)
+
 -- URL to download data from
-local url = 'http://www.midguardians.com/gear-overview/loot.json'
+local url = settings.url
 
 -- Mess around to get a proper windows path that can be used in powershell
-local outdir = string.gsub(
+local data_dir = string.gsub(
         string.gsub(windower.addon_path, "/", "\\"),
         "\\\\", "\\"
     ) .. "data"
 
-if not windower.dir_exists(outdir) then
-    windower.create_dir(outdir)
+if not windower.dir_exists(data_dir) then
+    windower.create_dir(data_dir)
 end
 
-local data_file = outdir .. "\\mg_data.json"
+local data_file = data_dir .. "\\mg_data.json"
 local complete_file = data_file .. ".downloaded_ok.txt"
+
+local alliance_file = data_dir .. "\\alliance.json"
 
 local lotters_data = {}
 local alliance_names = {}
 
 local download_command = string.format(
-    "Invoke-WebRequest -Uri '%s' -OutFile '%s'; " ..
+    "$JSON = [IO.File]::ReadAllText('%s'); " ..
+    "$POST = @{alliance_json=$JSON}; " ..
+    "Invoke-WebRequest -Uri '%s' -OutFile '%s' -Method POST -Body $POST; " ..
     "if($?) { New-Item -ItemType file '%s' }",
-    url, data_file, complete_file
+    alliance_file, url, data_file, complete_file
 )
 
 local function say(message, color)
@@ -61,52 +74,6 @@ local function load_data()
     say("Loaded " .. count .. " lottable items.")
 end
 
-
-local function download_data()
-    say("Running powershell command to download data from website")
-
-    -- Remove old sync file
-    if windower.file_exists(complete_file) then
-        os.remove(complete_file)
-    end
-
-    -- Run powershell
-    windower.execute(
-        "powershell.exe",
-        {"-WindowStyle", "Hidden", "-Command", download_command}
-    )
-
-    -- Check for completion
-    local tries = 0;
-    local max_wait = 5
-    local wait_interval = 0.2
-    local max_tries = max_wait / wait_interval
-
-    local function check_done()
-        if tries >= max_tries then
-            say(" - Download failed!")
-            return
-        end
-        
-        if windower.file_exists(complete_file) then
-            say(" - Download succeeded!")
-            os.remove(complete_file)
-            load_data()
-            return
-        end
-
-        -- Count up number of tries
-        tries = tries + 1
-
-        -- Reschedule
-        coroutine.schedule(check_done, wait_interval)
-    end
-
-    check_done()
-end
-
-download_data()
-
 local function update_alliance_names()
     local party_data = windower.ffxi.get_party()
     alliance_names = {}
@@ -124,6 +91,70 @@ local function update_alliance_names()
         end
     end
 end
+
+local function download_data()
+    say("Running powershell command to download data from website")
+
+    -- Remove old sync file
+    if windower.file_exists(complete_file) then
+        os.remove(complete_file)
+    end
+
+    update_alliance_names()
+    local alliance_data = T{}
+    for k, v in pairs(alliance_names) do
+        alliance_data:insert(k)
+    end
+
+    local zone_id = windower.ffxi.get_info().zone
+
+    local alliance_json = json.encode({
+        ["members"]=alliance_data,
+        ["uploaded_by"]=windower.ffxi.get_player().name,
+        ["zone"]=res.zones[zone_id].en,
+    })
+    local f = assert(io.open(alliance_file, "w"))
+    f:write(alliance_json)
+    f:close()
+
+    cmd_args = {"-WindowStyle", "Hidden", "-Command", download_command}
+    if settings.debug then
+        cmd_args = {"-NoExit", "-Command", download_command}
+    end
+
+    -- Run powershell
+    windower.execute("powershell.exe", cmd_args)
+
+    -- Check for completion
+    local tries = 0;
+    local max_wait = 5
+    local wait_interval = 0.2
+    local max_tries = max_wait / wait_interval
+
+    local function check_done()
+        if tries >= max_tries then
+            say(" - Download failed!")
+            return
+        end
+
+        if windower.file_exists(complete_file) then
+            say(" - Download succeeded!")
+            os.remove(complete_file)
+            load_data()
+            return
+        end
+    
+        -- Count up number of tries
+        tries = tries + 1
+
+        -- Reschedule
+        coroutine.schedule(check_done, wait_interval)
+    end
+
+    check_done()
+end
+
+download_data()
 
 local output_queue = T{}
 local output_index = 1
@@ -237,5 +268,28 @@ windower.register_event('incoming chunk', function(id, data)
         end
 
         output_result(item_name, lotters)
+    end
+end)
+
+windower.register_event('addon command', function(command, ...)
+    command = (command or 'help')
+
+    local allowed_commands = {
+        ["help"]=true,
+        ["reload"]=true
+    }
+    if not allowed_commands[command] then
+        command = "help"
+    end
+
+    if "help" == command then
+        say("Usage:")
+        say("  //mg reload")
+        say("    - Reloads lotting data from server and registers current " ..
+                  "alliance")
+        say("  //mg help")
+        say("     - This message")
+    elseif "reload" == command then
+        download_data()
     end
 end)
