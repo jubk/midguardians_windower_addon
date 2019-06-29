@@ -271,6 +271,18 @@ windower.register_event('incoming chunk', function(id, data)
     end
 end)
 
+windower.register_event('zone change', function()
+    local zone_id = windower.ffxi.get_info().zone
+    local new_zone = res.zones[zone_id].en
+
+    if (
+        "Reisenjima Henge" == new_zone or
+        "Dynamis" == new_zone:sub(1, 7)
+    ) then
+        download_data()
+    end
+end)
+
 windower.register_event('addon command', function(command, ...)
     command = (command or 'help')
 
