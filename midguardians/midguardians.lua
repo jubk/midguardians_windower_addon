@@ -127,7 +127,7 @@ local function download_data()
 
     -- Check for completion
     local tries = 0;
-    local max_wait = 5
+    local max_wait = 10
     local wait_interval = 0.2
     local max_tries = max_wait / wait_interval
 
