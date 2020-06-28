@@ -5,7 +5,6 @@ _addon.command = 'mg'
 _addon.commands = {'reload'}
 
 res = require('resources')
-config = require('config')
 packets = require('packets')
 json =  require('json')
 config = require('config')
@@ -15,8 +14,11 @@ require("logger")
 local default_settings = {}
 default_settings.url = 'http://www.midguardians.com/gear-overview/loot.json'
 default_settings.debug = false
+default_settings.download_timeout = 10
+default_settings.debug_item = "Earth crystal"
 
 settings = config.load(default_settings)
+config.save(settings)
 
 -- URL to download data from
 local url = settings.url
@@ -51,29 +53,6 @@ local function say(message, color)
     windower.add_to_chat(color or 128, "MG: " .. message);
 end
 
-local function load_data()
-    local f = assert(io.open(data_file, "rb"))
-    local content = f:read("*all")
-    f:close()
-
-    local tmpdata = json.decode(content)
-    lotters_data = {}
-    local count = 0
-    for k, v in pairs(tmpdata) do
-        lotters_data[k:lower()] = v
-        count = count + 1
-    end
-
-    -- table.vprint(lotters_data)
-
-    --lotters_data["wind crystal"] = {
-    --    Razokoooko=true,
-    --    Miaw=true
-    --}
-
-    say("Loaded " .. count .. " lottable items.")
-end
-
 local function update_alliance_names()
     local party_data = windower.ffxi.get_party()
     alliance_names = {}
@@ -90,6 +69,47 @@ local function update_alliance_names()
             alliance_names[party_data["a" .. idx3].name] = true
         end
     end
+end
+
+local function load_data()
+    local f = assert(io.open(data_file, "rb"))
+    local content = f:read("*all")
+    f:close()
+
+    local tmpdata = json.decode(content)
+    if(settings.debug) then
+        -- Build a loot setting for earth crystals that includes
+        -- all members of the current alliance as both lotters
+        -- and priority queue members
+        update_alliance_names()
+
+        local all_members = T{}
+        local all_members_list = T{}
+        for k, v in pairs(alliance_names) do
+            table.insert(all_members_list, k)
+            all_members[k] = true
+        end
+
+        all_members['_priority_queue'] = all_members_list
+        tmpdata[settings.debug_item] = all_members
+    end
+
+    lotters_data = {}
+
+    local count = 0
+    for k, v in pairs(tmpdata) do
+        lotters_data[k:lower()] = v
+        count = count + 1
+    end
+
+    -- table.vprint(lotters_data[settings.debug_item:lower()])
+
+    --lotters_data["wind crystal"] = {
+    --    Razokoooko=true,
+    --    Miaw=true
+    --}
+
+    say("Loaded " .. count .. " lottable items.")
 end
 
 local function download_data()
@@ -127,7 +147,7 @@ local function download_data()
 
     -- Check for completion
     local tries = 0;
-    local max_wait = 10
+    local max_wait = settings.download_timeout
     local wait_interval = 0.2
     local max_tries = max_wait / wait_interval
 
@@ -190,13 +210,19 @@ function start_output()
     end
 end
 
-function output_result(item_name, lotters)
+function output_result(item_name, lotters, priority_queue)
     local lines = T{}
 
     table.insert(lines, "~~ Players who can lot for " .. item_name .. " ~~")
 
-    if table.getn(lotters) == 0 then
-        table.insert(lines, "  None!")
+    if priority_queue then
+        table.insert(lines, " Priority lotters:")
+        table.insert(lines, "  " .. table.concat(priority_queue, ", "))
+        table.insert(lines, " Non-priority lotters:")
+    end
+
+    if table.getn(lotters) == 0 and not priority_queue then
+        table.insert(lines, "  It's freelot!")
     else
         local out_str = ""
         for _, name in pairs(lotters) do
@@ -267,7 +293,7 @@ windower.register_event('incoming chunk', function(id, data)
             end
         end
 
-        output_result(item_name, lotters)
+        output_result(item_name, lotters, allowed_lotters["_priority_queue"])
     end
 end)
 
